@@ -6,6 +6,7 @@ package io.modelcontextprotocol.server.transport;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -19,6 +20,7 @@ import io.modelcontextprotocol.spec.McpServerSession;
 import io.modelcontextprotocol.spec.McpServerTransport;
 import io.modelcontextprotocol.spec.McpServerTransportProvider;
 import io.modelcontextprotocol.util.Assert;
+import io.modelcontextprotocol.util.KeepAliveScheduler;
 import jakarta.servlet.AsyncContext;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.annotation.WebServlet;
@@ -27,6 +29,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -103,6 +106,8 @@ public class HttpServletSseServerTransportProvider extends HttpServlet implement
 	/** Session factory for creating new sessions */
 	private McpServerSession.Factory sessionFactory;
 
+	private final KeepAliveScheduler keepAliveScheduler;
+
 	/**
 	 * Creates a new HttpServletSseServerTransportProvider instance with a custom SSE
 	 * endpoint.
@@ -127,10 +132,35 @@ public class HttpServletSseServerTransportProvider extends HttpServlet implement
 	 */
 	public HttpServletSseServerTransportProvider(ObjectMapper objectMapper, String baseUrl, String messageEndpoint,
 			String sseEndpoint) {
+		this(objectMapper, baseUrl, messageEndpoint, sseEndpoint, null);
+
+	}
+
+	/**
+	 * Creates a new HttpServletSseServerTransportProvider instance with a custom SSE
+	 * endpoint.
+	 * @param objectMapper The JSON object mapper to use for message
+	 * serialization/deserialization
+	 * @param baseUrl The base URL for the server transport
+	 * @param messageEndpoint The endpoint path where clients will send their messages
+	 * @param sseEndpoint The endpoint path where clients will establish SSE connections
+	 */
+	public HttpServletSseServerTransportProvider(ObjectMapper objectMapper, String baseUrl, String messageEndpoint,
+			String sseEndpoint, Duration keepAliveInterval) {
+
 		this.objectMapper = objectMapper;
 		this.baseUrl = baseUrl;
 		this.messageEndpoint = messageEndpoint;
 		this.sseEndpoint = sseEndpoint;
+
+		if (keepAliveInterval != null) {
+			this.keepAliveScheduler = new KeepAliveScheduler();
+			this.keepAliveScheduler.start(this::keepAlive, keepAliveInterval, keepAliveInterval);
+		}
+		else {
+			this.keepAliveScheduler = null;
+			logger.warn("Keep-alive interval is not set, using default values");
+		}
 	}
 
 	/**
@@ -172,6 +202,31 @@ public class HttpServletSseServerTransportProvider extends HttpServlet implement
 			.flatMap(session -> session.sendNotification(method, params)
 				.doOnError(
 						e -> logger.error("Failed to send message to session {}: {}", session.getId(), e.getMessage()))
+				.onErrorComplete())
+			.then();
+	}
+
+	public static final TypeReference<Object> OBJECT_TYPE_REF = new TypeReference<>() {
+	};
+
+	private Mono<Void> keepAlive() {
+
+		if (isClosing.get()) {
+			logger.debug("Transport is closing, skipping keep-alive broadcast");
+			return Mono.empty();
+		}
+
+		if (sessions.isEmpty()) {
+			logger.debug("No active sessions to send keep-alive pings to");
+			return Mono.empty();
+		}
+
+		logger.debug("Broadcast keep-alinve, ping to {} active sessions", sessions.size());
+
+		return Flux.fromIterable(sessions.values())
+			.flatMap(session -> session.sendRequest(McpSchema.METHOD_PING, null, OBJECT_TYPE_REF)
+				.doOnError(e -> logger.error("Failed to send keep-alive ping to session {}: {}", session.getId(),
+						e.getMessage()))
 				.onErrorComplete())
 			.then();
 	}
@@ -324,7 +379,11 @@ public class HttpServletSseServerTransportProvider extends HttpServlet implement
 		isClosing.set(true);
 		logger.debug("Initiating graceful shutdown with {} active sessions", sessions.size());
 
-		return Flux.fromIterable(sessions.values()).flatMap(McpServerSession::closeGracefully).then();
+		return Flux.fromIterable(sessions.values()).flatMap(McpServerSession::closeGracefully).doOnComplete(() -> {
+			if (keepAliveScheduler != null) {
+				keepAliveScheduler.shutdown();
+			}
+		}).then();
 	}
 
 	/**
@@ -475,6 +534,8 @@ public class HttpServletSseServerTransportProvider extends HttpServlet implement
 
 		private String sseEndpoint = DEFAULT_SSE_ENDPOINT;
 
+		private Duration keepAliveInterval;
+
 		/**
 		 * Sets the JSON object mapper to use for message serialization/deserialization.
 		 * @param objectMapper The object mapper to use
@@ -523,6 +584,18 @@ public class HttpServletSseServerTransportProvider extends HttpServlet implement
 		}
 
 		/**
+		 * Sets the keep-alive interval for the transport.
+		 * <p>
+		 * If not specified or null, no keep-alive functionality will be enabled.
+		 * @param keepAliveInterval The keep-alive interval duration
+		 * @return This builder instance for method chaining
+		 */
+		public Builder keepAliveInterval(Duration keepAliveInterval) {
+			this.keepAliveInterval = keepAliveInterval;
+			return this;
+		}
+
+		/**
 		 * Builds a new instance of HttpServletSseServerTransportProvider with the
 		 * configured settings.
 		 * @return A new HttpServletSseServerTransportProvider instance
@@ -535,7 +608,8 @@ public class HttpServletSseServerTransportProvider extends HttpServlet implement
 			if (messageEndpoint == null) {
 				throw new IllegalStateException("MessageEndpoint must be set");
 			}
-			return new HttpServletSseServerTransportProvider(objectMapper, baseUrl, messageEndpoint, sseEndpoint);
+			return new HttpServletSseServerTransportProvider(objectMapper, baseUrl, messageEndpoint, sseEndpoint,
+					keepAliveInterval);
 		}
 
 	}

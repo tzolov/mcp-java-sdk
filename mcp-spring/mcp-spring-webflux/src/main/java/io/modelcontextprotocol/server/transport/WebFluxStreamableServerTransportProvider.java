@@ -10,6 +10,8 @@ import io.modelcontextprotocol.spec.McpStreamableServerTransport;
 import io.modelcontextprotocol.spec.McpStreamableServerTransportProvider;
 import io.modelcontextprotocol.spec.McpTransportContext;
 import io.modelcontextprotocol.util.Assert;
+import io.modelcontextprotocol.util.KeepAliveScheduler;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -26,6 +28,7 @@ import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
@@ -59,6 +62,8 @@ public class WebFluxStreamableServerTransportProvider implements McpStreamableSe
 	 */
 	private volatile boolean isClosing = false;
 
+	private final KeepAliveScheduler keepAliveScheduler;
+
 	/**
 	 * Constructs a new WebFlux SSE server transport provider instance with the default
 	 * SSE endpoint.
@@ -85,6 +90,25 @@ public class WebFluxStreamableServerTransportProvider implements McpStreamableSe
 	 */
 	public WebFluxStreamableServerTransportProvider(ObjectMapper objectMapper, String baseUrl, String mcpEndpoint,
 			boolean disallowDelete) {
+		this(objectMapper, baseUrl, mcpEndpoint, disallowDelete, null);
+	}
+
+	/**
+	 * Constructs a new WebFlux SSE server transport provider instance.
+	 * @param objectMapper The ObjectMapper to use for JSON serialization/deserialization
+	 * of MCP messages. Must not be null.
+	 * @param baseUrl webflux message base path
+	 * @param mcpEndpoint The endpoint URI where clients should send their JSON-RPC
+	 * messages. This endpoint will be communicated to clients during SSE connection
+	 * setup. Must not be null.
+	 * @param disallowDelete Whether to disallow DELETE requests to the MCP endpoint. If
+	 * true, DELETE requests will return a 405 Method Not Allowed response.
+	 * @param keepAliveInterval The interval for sending keep-alive pings to clients. If
+	 * null, keep-alive pings are disabled.
+	 * @throws IllegalArgumentException if either parameter is null
+	 */
+	public WebFluxStreamableServerTransportProvider(ObjectMapper objectMapper, String baseUrl, String mcpEndpoint,
+			boolean disallowDelete, Duration keepAliveInterval) {
 		Assert.notNull(objectMapper, "ObjectMapper must not be null");
 		Assert.notNull(baseUrl, "Message base path must not be null");
 		Assert.notNull(mcpEndpoint, "Message endpoint must not be null");
@@ -98,6 +122,15 @@ public class WebFluxStreamableServerTransportProvider implements McpStreamableSe
 			.POST(this.mcpEndpoint, this::handlePost)
 			.DELETE(this.mcpEndpoint, this::handleDelete)
 			.build();
+
+		if (keepAliveInterval != null) {
+			this.keepAliveScheduler = new KeepAliveScheduler();
+			this.keepAliveScheduler.start(this::keepAlive, keepAliveInterval, keepAliveInterval);
+
+		}
+		else {
+			this.keepAliveScheduler = null;
+		}
 	}
 
 	@Override
@@ -136,6 +169,26 @@ public class WebFluxStreamableServerTransportProvider implements McpStreamableSe
 			.flatMap(session -> session.sendNotification(method, params)
 				.doOnError(
 						e -> logger.error("Failed to send message to session {}: {}", session.getId(), e.getMessage()))
+				.onErrorComplete())
+			.then();
+	}
+
+	public static final TypeReference<Object> OBJECT_TYPE_REF = new TypeReference<>() {
+	};
+
+	private Mono<Void> keepAlive() {
+
+		if (sessions.isEmpty()) {
+			logger.debug("No active sessions to send keep-alive pings to");
+			return Mono.empty();
+		}
+
+		logger.debug("Broadcast keep-alinve, ping to {} active sessions", sessions.size());
+
+		return Flux.fromIterable(sessions.values())
+			.flatMap(session -> session.sendRequest(McpSchema.METHOD_PING, null, OBJECT_TYPE_REF)
+				.doOnError(e -> logger.error("Failed to send keep-alive ping to session {}: {}", session.getId(),
+						e.getMessage()))
 				.onErrorComplete())
 			.then();
 	}
@@ -423,6 +476,8 @@ public class WebFluxStreamableServerTransportProvider implements McpStreamableSe
 
 		private String mcpEndpoint = "/mcp";
 
+		private Duration keepAliveInterval = null;
+
 		/**
 		 * Sets the ObjectMapper to use for JSON serialization/deserialization of MCP
 		 * messages.
@@ -462,6 +517,18 @@ public class WebFluxStreamableServerTransportProvider implements McpStreamableSe
 		}
 
 		/**
+		 * Sets the interval for keep-alive pings sent to clients. If null, keep-alive
+		 * pings are disabled.
+		 * @param keepAliveInterval The keep-alive interval duration, or null to disable
+		 * keep-alive pings
+		 * @return this builder instance
+		 */
+		public Builder keepAliveInterval(Duration keepAliveInterval) {
+			this.keepAliveInterval = keepAliveInterval;
+			return this;
+		}
+
+		/**
 		 * Builds a new instance of {@link WebFluxStreamableServerTransportProvider} with
 		 * the configured settings.
 		 * @return A new WebFluxSseServerTransportProvider instance
@@ -471,7 +538,8 @@ public class WebFluxStreamableServerTransportProvider implements McpStreamableSe
 			Assert.notNull(objectMapper, "ObjectMapper must be set");
 			Assert.notNull(mcpEndpoint, "Message endpoint must be set");
 
-			return new WebFluxStreamableServerTransportProvider(objectMapper, baseUrl, mcpEndpoint, false);
+			return new WebFluxStreamableServerTransportProvider(objectMapper, baseUrl, mcpEndpoint, false,
+					keepAliveInterval);
 		}
 
 	}
