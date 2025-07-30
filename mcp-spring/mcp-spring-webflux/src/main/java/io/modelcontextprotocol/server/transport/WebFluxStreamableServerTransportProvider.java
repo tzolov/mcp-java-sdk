@@ -126,8 +126,8 @@ public class WebFluxStreamableServerTransportProvider implements McpStreamableSe
 
 		if (keepAliveInterval != null) {
 
-			this.keepAliveScheduler = KeepAliveScheduler.builder()
-				.mcpSessions(() -> (isClosing) ? Flux.empty() : Flux.fromIterable(sessions.values()))
+			this.keepAliveScheduler = KeepAliveScheduler
+				.builder(() -> (isClosing) ? Flux.empty() : Flux.fromIterable(sessions.values()))
 				.scheduler(Schedulers.boundedElastic())
 				.initialDelay(keepAliveInterval)
 				.interval(keepAliveInterval)

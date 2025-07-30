@@ -156,8 +156,8 @@ public class HttpServletSseServerTransportProvider extends HttpServlet implement
 
 		if (keepAliveInterval != null) {
 
-			this.keepAliveScheduler = KeepAliveScheduler.builder()
-				.mcpSessions(() -> (isClosing.get()) ? Flux.empty() : Flux.fromIterable(sessions.values()))
+			this.keepAliveScheduler = KeepAliveScheduler
+				.builder(() -> (isClosing.get()) ? Flux.empty() : Flux.fromIterable(sessions.values()))
 				.initialDelay(keepAliveInterval)
 				.interval(keepAliveInterval)
 				.build();

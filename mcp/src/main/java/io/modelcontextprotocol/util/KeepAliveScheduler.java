@@ -20,7 +20,11 @@ import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
 /**
- * A utility class for scheduling regular keep-alive calls to maintain connections.
+ * A utility class for scheduling regular keep-alive calls to maintain connections. It
+ * sends periodic keep-alive, ping, messages to connected mcp clients to prevent idle
+ * timeouts.
+ *
+ * The pings are sent to all active mcp sessions at regular intervals.
  *
  * @author Christian Tzolov
  */
@@ -69,36 +73,9 @@ public class KeepAliveScheduler {
 	 * Creates a new Builder instance for constructing KeepAliveScheduler.
 	 * @return A new Builder instance
 	 */
-	public static Builder builder() {
-		return new Builder();
+	public static Builder builder(Supplier<Flux<McpSession>> mcpSessions) {
+		return new Builder(mcpSessions);
 	}
-
-	/**
-	 * Starts regular keepAlive calls with reactive keepAlive method.
-	 * @return Disposable to control the scheduled execution
-	 */
-	// public Disposable start(Supplier<Mono<Void>> keepAliveMono) {
-	// if (this.isRunning.compareAndSet(false, true)) {
-	// this.currentSubscription = Flux.interval(this.initialDelay, this.interval,
-	// scheduler)
-	// .flatMap(tick -> keepAliveMono.get().onErrorResume(error -> {
-	// logger.error("KeepAlive execution failed", error);
-	// return Mono.empty();
-	// }))
-	// .doOnCancel(() -> this.isRunning.set(false))
-	// .doOnComplete(() -> this.isRunning.set(false))
-	// .doOnError(error -> {
-	// logger.error("KeepAlive scheduler error", error);
-	// this.isRunning.set(false);
-	// })
-	// .subscribe();
-
-	// return this.currentSubscription;
-	// } else {
-	// throw new IllegalStateException("KeepAlive scheduler is already running. Stop
-	// it first.");
-	// }
-	// }
 
 	/**
 	 * Starts regular keepAlive calls with initial delay.
@@ -204,14 +181,12 @@ public class KeepAliveScheduler {
 		private Supplier<Flux<McpSession>> mcpSessions;
 
 		/**
-		 * Sets the supplier for reactive McpSession instances.
+		 * Creates a new Builder instance with a supplier for McpSession instances.
 		 * @param mcpSessions The supplier for McpSession instances
-		 * @return This builder instance for method chaining
 		 */
-		public Builder mcpSessions(Supplier<Flux<McpSession>> mcpSessions) {
+		Builder(Supplier<Flux<McpSession>> mcpSessions) {
 			Assert.notNull(mcpSessions, "McpSessions supplier must not be null");
 			this.mcpSessions = mcpSessions;
-			return this;
 		}
 
 		/**
@@ -228,6 +203,7 @@ public class KeepAliveScheduler {
 		 * @return This builder instance for method chaining
 		 */
 		public Builder scheduler(Scheduler scheduler) {
+			Assert.notNull(scheduler, "Scheduler must not be null");
 			this.scheduler = scheduler;
 			return this;
 		}
@@ -238,6 +214,7 @@ public class KeepAliveScheduler {
 		 * @return This builder instance for method chaining
 		 */
 		public Builder initialDelay(Duration initialDelay) {
+			Assert.notNull(initialDelay, "Initial delay must not be null");
 			this.initialDelay = initialDelay;
 			return this;
 		}
@@ -248,6 +225,7 @@ public class KeepAliveScheduler {
 		 * @return This builder instance for method chaining
 		 */
 		public Builder interval(Duration interval) {
+			Assert.notNull(interval, "Interval must not be null");
 			this.interval = interval;
 			return this;
 		}
