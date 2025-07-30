@@ -199,7 +199,10 @@ public class WebFluxStreamableServerTransportProvider implements McpStreamableSe
 		return Flux.fromIterable(sessions.values())
 			.doFirst(() -> logger.debug("Initiating graceful shutdown with {} active sessions", sessions.size()))
 			.flatMap(McpStreamableServerSession::closeGracefully)
-			.doOnComplete(() -> this.keepAliveScheduler.shutdown())
+			.doOnComplete(() -> {
+				if (this.keepAliveScheduler != null)
+					this.keepAliveScheduler.shutdown();
+			})
 			.then();
 	}
 
