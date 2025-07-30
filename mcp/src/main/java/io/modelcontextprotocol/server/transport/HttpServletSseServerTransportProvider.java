@@ -12,8 +12,12 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import io.modelcontextprotocol.spec.McpError;
 import io.modelcontextprotocol.spec.McpSchema;
 import io.modelcontextprotocol.spec.McpServerSession;
@@ -27,9 +31,6 @@ import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -106,7 +107,7 @@ public class HttpServletSseServerTransportProvider extends HttpServlet implement
 	/** Session factory for creating new sessions */
 	private McpServerSession.Factory sessionFactory;
 
-	private final KeepAliveScheduler keepAliveScheduler;
+	private KeepAliveScheduler keepAliveScheduler;
 
 	/**
 	 * Creates a new HttpServletSseServerTransportProvider instance with a custom SSE
@@ -154,12 +155,14 @@ public class HttpServletSseServerTransportProvider extends HttpServlet implement
 		this.sseEndpoint = sseEndpoint;
 
 		if (keepAliveInterval != null) {
-			this.keepAliveScheduler = new KeepAliveScheduler();
-			this.keepAliveScheduler.start(this::keepAlive, keepAliveInterval, keepAliveInterval);
-		}
-		else {
-			this.keepAliveScheduler = null;
-			logger.warn("Keep-alive interval is not set, using default values");
+
+			this.keepAliveScheduler = KeepAliveScheduler.builder()
+				.mcpSessions(() -> (isClosing.get()) ? Flux.empty() : Flux.fromIterable(sessions.values()))
+				.initialDelay(keepAliveInterval)
+				.interval(keepAliveInterval)
+				.build();
+
+			this.keepAliveScheduler.start();
 		}
 	}
 
@@ -202,31 +205,6 @@ public class HttpServletSseServerTransportProvider extends HttpServlet implement
 			.flatMap(session -> session.sendNotification(method, params)
 				.doOnError(
 						e -> logger.error("Failed to send message to session {}: {}", session.getId(), e.getMessage()))
-				.onErrorComplete())
-			.then();
-	}
-
-	public static final TypeReference<Object> OBJECT_TYPE_REF = new TypeReference<>() {
-	};
-
-	private Mono<Void> keepAlive() {
-
-		if (isClosing.get()) {
-			logger.debug("Transport is closing, skipping keep-alive broadcast");
-			return Mono.empty();
-		}
-
-		if (sessions.isEmpty()) {
-			logger.debug("No active sessions to send keep-alive pings to");
-			return Mono.empty();
-		}
-
-		logger.debug("Broadcast keep-alinve, ping to {} active sessions", sessions.size());
-
-		return Flux.fromIterable(sessions.values())
-			.flatMap(session -> session.sendRequest(McpSchema.METHOD_PING, null, OBJECT_TYPE_REF)
-				.doOnError(e -> logger.error("Failed to send keep-alive ping to session {}: {}", session.getId(),
-						e.getMessage()))
 				.onErrorComplete())
 			.then();
 	}

@@ -26,6 +26,7 @@ import reactor.core.Exceptions;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -62,7 +63,7 @@ public class WebFluxStreamableServerTransportProvider implements McpStreamableSe
 	 */
 	private volatile boolean isClosing = false;
 
-	private final KeepAliveScheduler keepAliveScheduler;
+	private KeepAliveScheduler keepAliveScheduler;
 
 	/**
 	 * Constructs a new WebFlux SSE server transport provider instance with the default
@@ -124,12 +125,15 @@ public class WebFluxStreamableServerTransportProvider implements McpStreamableSe
 			.build();
 
 		if (keepAliveInterval != null) {
-			this.keepAliveScheduler = new KeepAliveScheduler();
-			this.keepAliveScheduler.start(this::keepAlive, keepAliveInterval, keepAliveInterval);
 
-		}
-		else {
-			this.keepAliveScheduler = null;
+			this.keepAliveScheduler = KeepAliveScheduler.builder()
+				.mcpSessions(() -> (isClosing) ? Flux.empty() : Flux.fromIterable(sessions.values()))
+				.scheduler(Schedulers.boundedElastic())
+				.initialDelay(keepAliveInterval)
+				.interval(keepAliveInterval)
+				.build();
+
+			this.keepAliveScheduler.start();
 		}
 	}
 
@@ -173,26 +177,6 @@ public class WebFluxStreamableServerTransportProvider implements McpStreamableSe
 			.then();
 	}
 
-	public static final TypeReference<Object> OBJECT_TYPE_REF = new TypeReference<>() {
-	};
-
-	private Mono<Void> keepAlive() {
-
-		if (sessions.isEmpty()) {
-			logger.debug("No active sessions to send keep-alive pings to");
-			return Mono.empty();
-		}
-
-		logger.debug("Broadcast keep-alinve, ping to {} active sessions", sessions.size());
-
-		return Flux.fromIterable(sessions.values())
-			.flatMap(session -> session.sendRequest(McpSchema.METHOD_PING, null, OBJECT_TYPE_REF)
-				.doOnError(e -> logger.error("Failed to send keep-alive ping to session {}: {}", session.getId(),
-						e.getMessage()))
-				.onErrorComplete())
-			.then();
-	}
-
 	// FIXME: This javadoc makes claims about using isClosing flag but it's not
 	// actually
 	// doing that.
@@ -215,6 +199,7 @@ public class WebFluxStreamableServerTransportProvider implements McpStreamableSe
 		return Flux.fromIterable(sessions.values())
 			.doFirst(() -> logger.debug("Initiating graceful shutdown with {} active sessions", sessions.size()))
 			.flatMap(McpStreamableServerSession::closeGracefully)
+			.doOnComplete(() -> this.keepAliveScheduler.shutdown())
 			.then();
 	}
 

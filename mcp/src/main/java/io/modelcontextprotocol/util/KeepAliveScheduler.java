@@ -3,11 +3,6 @@
  */
 package io.modelcontextprotocol.util;
 
-import reactor.core.Disposable;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Scheduler;
-import reactor.core.scheduler.Schedulers;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
@@ -15,16 +10,32 @@ import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+
+import io.modelcontextprotocol.spec.McpSchema;
+import io.modelcontextprotocol.spec.McpSession;
+import reactor.core.Disposable;
+import reactor.core.publisher.Flux;
+import reactor.core.scheduler.Scheduler;
+import reactor.core.scheduler.Schedulers;
+
 /**
- * A utility class for scheduling regular keepAlive method calls using Project Reactor.
- * Provides both blocking and non-blocking keepAlive execution with configurable
- * intervals.
+ * A utility class for scheduling regular keep-alive calls to maintain connections.
  *
  * @author Christian Tzolov
  */
 public class KeepAliveScheduler {
 
 	private static final Logger logger = LoggerFactory.getLogger(KeepAliveScheduler.class);
+
+	private static final TypeReference<Object> OBJECT_TYPE_REF = new TypeReference<>() {
+	};
+
+	/** Initial delay before the first keepAlive call */
+	private final Duration initialDelay;
+
+	/** Interval between subsequent keepAlive calls */
+	private final Duration interval;
 
 	/** The scheduler used for executing keepAlive calls */
 	private final Scheduler scheduler;
@@ -35,67 +46,107 @@ public class KeepAliveScheduler {
 	/** The current subscription for the keepAlive calls */
 	private Disposable currentSubscription;
 
+	/** Supplier for reactive McpSession instances */
+	private final Supplier<Flux<McpSession>> mcpSessions;
+
 	/**
-	 * Creates a KeepAliveScheduler with a default single-threaded scheduler.
+	 * Creates a KeepAliveScheduler with a custom scheduler, initial delay, interval and a
+	 * supplier for McpSession instances.
+	 * @param scheduler The scheduler to use for executing keepAlive calls
+	 * @param initialDelay Initial delay before the first keepAlive call
+	 * @param interval Interval between subsequent keepAlive calls
+	 * @param mcpSessions Supplier for McpSession instances
 	 */
-	public KeepAliveScheduler() {
-		this(Schedulers.single());
+	KeepAliveScheduler(Scheduler scheduler, Duration initialDelay, Duration interval,
+			Supplier<Flux<McpSession>> mcpSessions) {
+		this.scheduler = scheduler;
+		this.initialDelay = initialDelay;
+		this.interval = interval;
+		this.mcpSessions = mcpSessions;
 	}
 
 	/**
-	 * Creates a KeepAliveScheduler with a custom scheduler.
-	 * @param scheduler The scheduler to use for executing keepAlive calls
+	 * Creates a new Builder instance for constructing KeepAliveScheduler.
+	 * @return A new Builder instance
 	 */
-	public KeepAliveScheduler(Scheduler scheduler) {
-		this.scheduler = scheduler;
+	public static Builder builder() {
+		return new Builder();
 	}
 
 	/**
 	 * Starts regular keepAlive calls with reactive keepAlive method.
-	 * @param keepAliveMono A Mono representing the keepAlive operation
-	 * @param initialDelay Initial delay before the first call
-	 * @param interval The interval between calls
 	 * @return Disposable to control the scheduled execution
 	 */
-	public Disposable start(Supplier<Mono<Void>> keepAliveMono, Duration initialDelay, Duration interval) {
-		if (this.isRunning.compareAndSet(false, true)) {
-			this.currentSubscription = Flux.interval(initialDelay, interval, scheduler)
-				.flatMap(tick -> keepAliveMono.get().onErrorResume(error -> {
-					logger.error("KeepAlive execution failed", error);
-					return Mono.empty();
-				}))
-				.doOnCancel(() -> this.isRunning.set(false))
-				.doOnComplete(() -> this.isRunning.set(false))
-				.doOnError(error -> {
-					logger.error("KeepAlive scheduler error", error);
-					this.isRunning.set(false);
-				})
-				.subscribe();
+	// public Disposable start(Supplier<Mono<Void>> keepAliveMono) {
+	// if (this.isRunning.compareAndSet(false, true)) {
+	// this.currentSubscription = Flux.interval(this.initialDelay, this.interval,
+	// scheduler)
+	// .flatMap(tick -> keepAliveMono.get().onErrorResume(error -> {
+	// logger.error("KeepAlive execution failed", error);
+	// return Mono.empty();
+	// }))
+	// .doOnCancel(() -> this.isRunning.set(false))
+	// .doOnComplete(() -> this.isRunning.set(false))
+	// .doOnError(error -> {
+	// logger.error("KeepAlive scheduler error", error);
+	// this.isRunning.set(false);
+	// })
+	// .subscribe();
 
-			return this.currentSubscription;
-		}
-		else {
-			throw new IllegalStateException("KeepAlive scheduler is already running. Stop it first.");
-		}
-	}
+	// return this.currentSubscription;
+	// } else {
+	// throw new IllegalStateException("KeepAlive scheduler is already running. Stop
+	// it first.");
+	// }
+	// }
 
 	/**
 	 * Starts regular keepAlive calls with initial delay.
 	 * @param keepAlive The keepAlive method to call
-	 * @param initialDelay Initial delay before the first call
-	 * @param interval The interval between subsequent calls
 	 * @return Disposable to control the scheduled execution
 	 */
-	public Disposable start(Runnable keepAlive, Duration initialDelay, Duration interval) {
+	// public Disposable start(Runnable keepAlive) {
+	// if (this.isRunning.compareAndSet(false, true)) {
+	// this.currentSubscription = Flux.interval(this.initialDelay, this.interval,
+	// this.scheduler)
+	// .doOnNext(tick -> {
+	// try {
+	// keepAlive.run();
+	// } catch (Exception e) {
+	// logger.error("KeepAlive execution failed", e);
+	// }
+	// })
+	// .doOnCancel(() -> this.isRunning.set(false))
+	// .doOnComplete(() -> this.isRunning.set(false))
+	// .doOnError(error -> {
+	// logger.error("KeepAlive scheduler error", error);
+	// this.isRunning.set(false);
+	// })
+	// .subscribe();
+
+	// return this.currentSubscription;
+	// } else {
+	// throw new IllegalStateException("KeepAlive scheduler is already running. Stop
+	// it first.");
+	// }
+	// }
+
+	/**
+	 * Starts regular keepAlive calls with sessions supplier.
+	 * @return Disposable to control the scheduled execution
+	 */
+	public Disposable start() {
 		if (this.isRunning.compareAndSet(false, true)) {
-			this.currentSubscription = Flux.interval(initialDelay, interval, this.scheduler).doOnNext(tick -> {
-				try {
-					keepAlive.run();
-				}
-				catch (Exception e) {
-					logger.error("KeepAlive execution failed", e);
-				}
-			})
+
+			this.currentSubscription = Flux.interval(this.initialDelay, this.interval, this.scheduler)
+				.doOnNext(tick -> {
+					this.mcpSessions.get()
+						.flatMap(session -> session.sendRequest(McpSchema.METHOD_PING, null, OBJECT_TYPE_REF)
+							.doOnError(e -> logger.warn("Failed to send keep-alive ping to session {}: {}", session,
+									e.getMessage()))
+							.onErrorComplete())
+						.subscribe();
+				})
 				.doOnCancel(() -> this.isRunning.set(false))
 				.doOnComplete(() -> this.isRunning.set(false))
 				.doOnError(error -> {
@@ -140,45 +191,75 @@ public class KeepAliveScheduler {
 	}
 
 	/**
-	 * Example usage and demonstration of the KeepAliveScheduler.
+	 * Builder class for creating KeepAliveScheduler instances with fluent API.
 	 */
-	public static void main(String[] args) throws InterruptedException {
-		// Example 1: Simple keepAlive with Runnable
-		KeepAliveScheduler scheduler = new KeepAliveScheduler();
+	public static class Builder {
 
-		Runnable keepAlive = () -> {
-			System.out.println("KeepAlive called at: " + System.currentTimeMillis());
-			// Simulate some work
-			try {
-				Thread.sleep(100);
-			}
-			catch (InterruptedException e) {
-				Thread.currentThread().interrupt();
-			}
-		};
+		private Scheduler scheduler = Schedulers.single();
 
-		System.out.println("Starting keepAlive with 2-second interval...");
-		Disposable subscription = scheduler.start(keepAlive, Duration.ofSeconds(1), Duration.ofSeconds(2));
+		private Duration initialDelay = Duration.ofSeconds(0);
 
-		// Let it run for 10 seconds
-		Thread.sleep(10000);
+		private Duration interval = Duration.ofSeconds(30);
 
-		System.out.println("Stopping keepAlive...");
-		subscription.dispose();
+		private Supplier<Flux<McpSession>> mcpSessions;
 
-		// Example 2: Reactive keepAlive with Mono
-		System.out.println("\nStarting reactive keepAlive...");
-		Supplier<Mono<Void>> reactiveKeepAlive = () -> Mono
-			.fromRunnable(() -> System.out.println("Reactive KeepAlive: " + System.currentTimeMillis()))
-			.then()
-			.subscribeOn(Schedulers.boundedElastic());
+		/**
+		 * Sets the supplier for reactive McpSession instances.
+		 * @param mcpSessions The supplier for McpSession instances
+		 * @return This builder instance for method chaining
+		 */
+		public Builder mcpSessions(Supplier<Flux<McpSession>> mcpSessions) {
+			Assert.notNull(mcpSessions, "McpSessions supplier must not be null");
+			this.mcpSessions = mcpSessions;
+			return this;
+		}
 
-		scheduler.start(reactiveKeepAlive, Duration.ofSeconds(1), Duration.ofSeconds(1));
+		/**
+		 * Sets the scheduler to use for executing keepAlive calls.
+		 * @param scheduler The scheduler to use:
+		 * <ul>
+		 * <li>Schedulers.single() - single-threaded scheduler (Default)</li>
+		 * <li>Schedulers.boundedElastic() - bounded elastic scheduler for I/O
+		 * operations</li>
+		 * <li>Schedulers.parallel() - parallel scheduler for CPU-intensive
+		 * operations</li>
+		 * <li>Schedulers.immediate() - immediate scheduler for synchronous execution</li>
+		 * </ul>
+		 * @return This builder instance for method chaining
+		 */
+		public Builder scheduler(Scheduler scheduler) {
+			this.scheduler = scheduler;
+			return this;
+		}
 
-		Thread.sleep(5000);
+		/**
+		 * Sets the initial delay before the first keepAlive call.
+		 * @param initialDelay The initial delay duration
+		 * @return This builder instance for method chaining
+		 */
+		public Builder initialDelay(Duration initialDelay) {
+			this.initialDelay = initialDelay;
+			return this;
+		}
 
-		scheduler.shutdown();
-		System.out.println("Scheduler shut down.");
+		/**
+		 * Sets the interval between subsequent keepAlive calls.
+		 * @param interval The interval duration
+		 * @return This builder instance for method chaining
+		 */
+		public Builder interval(Duration interval) {
+			this.interval = interval;
+			return this;
+		}
+
+		/**
+		 * Builds and returns a new KeepAliveScheduler instance.
+		 * @return A new KeepAliveScheduler configured with the builder's settings
+		 */
+		public KeepAliveScheduler build() {
+			return new KeepAliveScheduler(scheduler, initialDelay, interval, mcpSessions);
+		}
+
 	}
 
 }
