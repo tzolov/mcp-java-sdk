@@ -78,37 +78,6 @@ public class KeepAliveScheduler {
 	}
 
 	/**
-	 * Starts regular keepAlive calls with initial delay.
-	 * @param keepAlive The keepAlive method to call
-	 * @return Disposable to control the scheduled execution
-	 */
-	// public Disposable start(Runnable keepAlive) {
-	// if (this.isRunning.compareAndSet(false, true)) {
-	// this.currentSubscription = Flux.interval(this.initialDelay, this.interval,
-	// this.scheduler)
-	// .doOnNext(tick -> {
-	// try {
-	// keepAlive.run();
-	// } catch (Exception e) {
-	// logger.error("KeepAlive execution failed", e);
-	// }
-	// })
-	// .doOnCancel(() -> this.isRunning.set(false))
-	// .doOnComplete(() -> this.isRunning.set(false))
-	// .doOnError(error -> {
-	// logger.error("KeepAlive scheduler error", error);
-	// this.isRunning.set(false);
-	// })
-	// .subscribe();
-
-	// return this.currentSubscription;
-	// } else {
-	// throw new IllegalStateException("KeepAlive scheduler is already running. Stop
-	// it first.");
-	// }
-	// }
-
-	/**
 	 * Starts regular keepAlive calls with sessions supplier.
 	 * @return Disposable to control the scheduled execution
 	 */
