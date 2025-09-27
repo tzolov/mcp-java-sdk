@@ -163,6 +163,14 @@ public class McpSyncServer {
 	}
 
 	/**
+	 * List all registered prompts.
+	 * @return A list of all registered prompts
+	 */
+	public List<McpSchema.Prompt> listPrompts() {
+		return this.asyncServer.listPrompts().collectList().block();
+	}
+
+	/**
 	 * Remove a prompt handler.
 	 * @param promptName The name of the prompt handler to remove
 	 */

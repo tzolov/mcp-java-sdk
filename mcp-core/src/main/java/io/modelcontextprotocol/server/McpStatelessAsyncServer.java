@@ -593,24 +593,32 @@ public class McpStatelessAsyncServer {
 	 */
 	public Mono<Void> addPrompt(McpStatelessServerFeatures.AsyncPromptSpecification promptSpecification) {
 		if (promptSpecification == null) {
-			return Mono.error(new McpError("Prompt specification must not be null"));
+			return Mono.error(new IllegalArgumentException("Prompt specification must not be null"));
 		}
 		if (this.serverCapabilities.prompts() == null) {
-			return Mono.error(new McpError("Server must be configured with prompt capabilities"));
+			return Mono.error(new IllegalStateException("Server must be configured with prompt capabilities"));
 		}
 
 		return Mono.defer(() -> {
-			McpStatelessServerFeatures.AsyncPromptSpecification specification = this.prompts
-				.putIfAbsent(promptSpecification.prompt().name(), promptSpecification);
-			if (specification != null) {
-				return Mono.error(
-						new McpError("Prompt with name '" + promptSpecification.prompt().name() + "' already exists"));
+			var previous = this.prompts.put(promptSpecification.prompt().name(), promptSpecification);
+			if (previous != null) {
+				logger.warn("Replace existing Prompt with name '{}'", promptSpecification.prompt().name());
 			}
-
-			logger.debug("Added prompt handler: {}", promptSpecification.prompt().name());
+			else {
+				logger.debug("Added prompt handler: {}", promptSpecification.prompt().name());
+			}
 
 			return Mono.empty();
 		});
+	}
+
+	/**
+	 * List all registered prompts.
+	 * @return A Flux stream of all registered prompts
+	 */
+	public Flux<McpSchema.Prompt> listPrompts() {
+		return Flux.fromIterable(this.prompts.values())
+			.map(McpStatelessServerFeatures.AsyncPromptSpecification::prompt);
 	}
 
 	/**
@@ -620,10 +628,10 @@ public class McpStatelessAsyncServer {
 	 */
 	public Mono<Void> removePrompt(String promptName) {
 		if (promptName == null) {
-			return Mono.error(new McpError("Prompt name must not be null"));
+			return Mono.error(new IllegalArgumentException("Prompt name must not be null"));
 		}
 		if (this.serverCapabilities.prompts() == null) {
-			return Mono.error(new McpError("Server must be configured with prompt capabilities"));
+			return Mono.error(new IllegalStateException("Server must be configured with prompt capabilities"));
 		}
 
 		return Mono.defer(() -> {
@@ -633,7 +641,11 @@ public class McpStatelessAsyncServer {
 				logger.debug("Removed prompt handler: {}", promptName);
 				return Mono.empty();
 			}
-			return Mono.error(new McpError("Prompt with name '" + promptName + "' not found"));
+			else {
+				logger.warn("Ignore as a Prompt with name '{}' not found", promptName);
+			}
+
+			return Mono.empty();
 		});
 	}
 
@@ -662,7 +674,10 @@ public class McpStatelessAsyncServer {
 			// Implement prompt retrieval logic here
 			McpStatelessServerFeatures.AsyncPromptSpecification specification = this.prompts.get(promptRequest.name());
 			if (specification == null) {
-				return Mono.error(new McpError("Prompt not found: " + promptRequest.name()));
+				return Mono.error(McpError.builder(ErrorCodes.INVALID_PARAMS)
+					.message("Invalid prompt name")
+					.data("Prompt not found: " + promptRequest.name())
+					.build());
 			}
 
 			return specification.promptHandler().apply(ctx, promptRequest);

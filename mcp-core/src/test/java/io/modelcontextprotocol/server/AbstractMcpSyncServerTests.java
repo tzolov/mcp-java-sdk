@@ -496,9 +496,6 @@ public abstract class AbstractMcpSyncServerTests {
 			.capabilities(ServerCapabilities.builder().resources(true, false).build())
 			.build();
 
-		// Removing a non-existent resource template should complete successfully (no
-		// error)
-		// as per the new implementation that just logs a warning
 		assertThatCode(() -> mcpSyncServer.removeResourceTemplate("nonexistent://template/{id}"))
 			.doesNotThrowAnyException();
 
@@ -549,7 +546,7 @@ public abstract class AbstractMcpSyncServerTests {
 			.build();
 
 		assertThatThrownBy(() -> mcpSyncServer.addPrompt((McpServerFeatures.SyncPromptSpecification) null))
-			.isInstanceOf(McpError.class)
+			.isInstanceOf(IllegalArgumentException.class)
 			.hasMessage("Prompt specification must not be null");
 	}
 
@@ -562,7 +559,8 @@ public abstract class AbstractMcpSyncServerTests {
 				(exchange, req) -> new GetPromptResult("Test prompt description", List
 					.of(new PromptMessage(McpSchema.Role.ASSISTANT, new McpSchema.TextContent("Test content")))));
 
-		assertThatThrownBy(() -> serverWithoutPrompts.addPrompt(specification)).isInstanceOf(McpError.class)
+		assertThatThrownBy(() -> serverWithoutPrompts.addPrompt(specification))
+			.isInstanceOf(IllegalStateException.class)
 			.hasMessage("Server must be configured with prompt capabilities");
 	}
 
@@ -570,7 +568,8 @@ public abstract class AbstractMcpSyncServerTests {
 	void testRemovePromptWithoutCapability() {
 		var serverWithoutPrompts = prepareSyncServerBuilder().serverInfo("test-server", "1.0.0").build();
 
-		assertThatThrownBy(() -> serverWithoutPrompts.removePrompt(TEST_PROMPT_NAME)).isInstanceOf(McpError.class)
+		assertThatThrownBy(() -> serverWithoutPrompts.removePrompt(TEST_PROMPT_NAME))
+			.isInstanceOf(IllegalStateException.class)
 			.hasMessage("Server must be configured with prompt capabilities");
 	}
 
@@ -597,8 +596,7 @@ public abstract class AbstractMcpSyncServerTests {
 			.capabilities(ServerCapabilities.builder().prompts(true).build())
 			.build();
 
-		assertThatThrownBy(() -> mcpSyncServer.removePrompt("nonexistent-prompt")).isInstanceOf(McpError.class)
-			.hasMessage("Prompt with name 'nonexistent-prompt' not found");
+		assertThatCode(() -> mcpSyncServer.removePrompt("nonexistent://template/{id}")).doesNotThrowAnyException();
 
 		assertThatCode(() -> mcpSyncServer.closeGracefully()).doesNotThrowAnyException();
 	}
