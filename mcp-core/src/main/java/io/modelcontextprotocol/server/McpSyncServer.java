@@ -90,6 +90,14 @@ public class McpSyncServer {
 	}
 
 	/**
+	 * List all registered tools.
+	 * @return A list of all registered tools
+	 */
+	public List<McpSchema.Tool> listTools() {
+		return this.asyncServer.listTools().collectList().block();
+	}
+
+	/**
 	 * Remove a tool handler.
 	 * @param toolName The name of the tool handler to remove
 	 */

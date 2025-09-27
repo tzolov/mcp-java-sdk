@@ -319,25 +319,24 @@ public class McpStatelessAsyncServer {
 	 */
 	public Mono<Void> addTool(McpStatelessServerFeatures.AsyncToolSpecification toolSpecification) {
 		if (toolSpecification == null) {
-			return Mono.error(new McpError("Tool specification must not be null"));
+			return Mono.error(new IllegalArgumentException("Tool specification must not be null"));
 		}
 		if (toolSpecification.tool() == null) {
-			return Mono.error(new McpError("Tool must not be null"));
+			return Mono.error(new IllegalArgumentException("Tool must not be null"));
 		}
 		if (toolSpecification.callHandler() == null) {
-			return Mono.error(new McpError("Tool call handler must not be null"));
+			return Mono.error(new IllegalArgumentException("Tool call handler must not be null"));
 		}
 		if (this.serverCapabilities.tools() == null) {
-			return Mono.error(new McpError("Server must be configured with tool capabilities"));
+			return Mono.error(new IllegalStateException("Server must be configured with tool capabilities"));
 		}
 
 		var wrappedToolSpecification = withStructuredOutputHandling(this.jsonSchemaValidator, toolSpecification);
 
 		return Mono.defer(() -> {
-			// Check for duplicate tool names
-			if (this.tools.stream().anyMatch(th -> th.tool().name().equals(wrappedToolSpecification.tool().name()))) {
-				return Mono.error(
-						new McpError("Tool with name '" + wrappedToolSpecification.tool().name() + "' already exists"));
+			// Remove tools with duplicate tool names first
+			if (this.tools.removeIf(th -> th.tool().name().equals(wrappedToolSpecification.tool().name()))) {
+				logger.warn("Replace existing Tool with name '{}'", wrappedToolSpecification.tool().name());
 			}
 
 			this.tools.add(wrappedToolSpecification);
@@ -348,26 +347,36 @@ public class McpStatelessAsyncServer {
 	}
 
 	/**
+	 * List all registered tools.
+	 * @return A Flux stream of all registered tools
+	 */
+	public Flux<Tool> listTools() {
+		return Flux.fromIterable(this.tools).map(McpStatelessServerFeatures.AsyncToolSpecification::tool);
+	}
+
+	/**
 	 * Remove a tool handler at runtime.
 	 * @param toolName The name of the tool handler to remove
 	 * @return Mono that completes when clients have been notified of the change
 	 */
 	public Mono<Void> removeTool(String toolName) {
 		if (toolName == null) {
-			return Mono.error(new McpError("Tool name must not be null"));
+			return Mono.error(new IllegalArgumentException("Tool name must not be null"));
 		}
 		if (this.serverCapabilities.tools() == null) {
-			return Mono.error(new McpError("Server must be configured with tool capabilities"));
+			return Mono.error(new IllegalStateException("Server must be configured with tool capabilities"));
 		}
 
 		return Mono.defer(() -> {
-			boolean removed = this.tools
-				.removeIf(toolSpecification -> toolSpecification.tool().name().equals(toolName));
-			if (removed) {
+			if (this.tools.removeIf(toolSpecification -> toolSpecification.tool().name().equals(toolName))) {
+
 				logger.debug("Removed tool handler: {}", toolName);
-				return Mono.empty();
 			}
-			return Mono.error(new McpError("Tool with name '" + toolName + "' not found"));
+			else {
+				logger.warn("Ignore as a Tool with name '{}' not found", toolName);
+			}
+
+			return Mono.empty();
 		});
 	}
 
@@ -391,8 +400,10 @@ public class McpStatelessAsyncServer {
 				.findAny();
 
 			if (toolSpecification.isEmpty()) {
-				return Mono.error(new McpError(new JSONRPCResponse.JSONRPCError(McpSchema.ErrorCodes.INVALID_PARAMS,
-						"Unknown tool: invalid_tool_name", "Tool not found: " + callToolRequest.name())));
+				return Mono.error(McpError.builder(McpSchema.ErrorCodes.INVALID_PARAMS)
+					.message("Unknown tool: invalid_tool_name")
+					.data("Tool not found: " + callToolRequest.name())
+					.build());
 			}
 
 			return toolSpecification.get().callHandler().apply(ctx, callToolRequest);

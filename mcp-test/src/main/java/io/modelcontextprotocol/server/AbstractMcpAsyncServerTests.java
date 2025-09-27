@@ -149,13 +149,9 @@ public abstract class AbstractMcpAsyncServerTests {
 			.tool(duplicateTool, (exchange, args) -> Mono.just(new CallToolResult(List.of(), false)))
 			.build();
 
-		StepVerifier
-			.create(mcpAsyncServer.addTool(new McpServerFeatures.AsyncToolSpecification(duplicateTool,
-					(exchange, args) -> Mono.just(new CallToolResult(List.of(), false)))))
-			.verifyErrorSatisfies(error -> {
-				assertThat(error).isInstanceOf(McpError.class)
-					.hasMessage("Tool with name '" + TEST_TOOL_NAME + "' already exists");
-			});
+		StepVerifier.create(mcpAsyncServer.addTool(new McpServerFeatures.AsyncToolSpecification(duplicateTool,
+				(exchange, args) -> Mono.just(new CallToolResult(List.of(), false)))))
+			.verifyComplete();
 
 		assertThatCode(() -> mcpAsyncServer.closeGracefully().block(Duration.ofSeconds(10))).doesNotThrowAnyException();
 	}
@@ -176,10 +172,7 @@ public abstract class AbstractMcpAsyncServerTests {
 		StepVerifier.create(mcpAsyncServer.addTool(McpServerFeatures.AsyncToolSpecification.builder()
 			.tool(duplicateTool)
 			.callHandler((exchange, request) -> Mono.just(new CallToolResult(List.of(), false)))
-			.build())).verifyErrorSatisfies(error -> {
-				assertThat(error).isInstanceOf(McpError.class)
-					.hasMessage("Tool with name '" + TEST_TOOL_NAME + "' already exists");
-			});
+			.build())).verifyComplete();
 
 		assertThatCode(() -> mcpAsyncServer.closeGracefully().block(Duration.ofSeconds(10))).doesNotThrowAnyException();
 	}
@@ -273,9 +266,7 @@ public abstract class AbstractMcpAsyncServerTests {
 			.capabilities(ServerCapabilities.builder().tools(true).build())
 			.build();
 
-		StepVerifier.create(mcpAsyncServer.removeTool("nonexistent-tool")).verifyErrorSatisfies(error -> {
-			assertThat(error).isInstanceOf(McpError.class).hasMessage("Tool with name 'nonexistent-tool' not found");
-		});
+		StepVerifier.create(mcpAsyncServer.removeTool("nonexistent-tool")).verifyComplete();
 
 		assertThatCode(() -> mcpAsyncServer.closeGracefully().block(Duration.ofSeconds(10))).doesNotThrowAnyException();
 	}
